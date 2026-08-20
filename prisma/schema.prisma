@@ -1,9 +1,6 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -11,4 +8,225 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+enum Role {
+  TEACHER
+  STUDENT
+  PARENT
+  ADMIN
+}
+
+enum AssessmentType {
+  ASSIGNMENT
+  CBT
+}
+
+enum QuestionType {
+  MCQ
+  TRUE_FALSE
+  SHORT_ANSWER
+}
+
+enum SubmissionStatus {
+  PENDING_REVIEW
+  GRADED
+  RETURNED
+}
+
+enum CommentType {
+  PIN
+  STROKE
+  HIGHLIGHT
+}
+
+enum GradeStatus {
+  EXCELLENT
+  SATISFACTORY
+  NEEDS_REVISION
+}
+
+enum NotificationType {
+  SUBMITTED
+  RETURNED
+  RESUBMITTED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         Role
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  classId String?
+  class   Class?  @relation("ClassStudents", fields: [classId], references: [id])
+
+  taughtClasses Class[]             @relation("ClassTeacher")
+  assessments   Assessment[]
+  submissions   Submission[]
+  gradesGiven   Grade[]             @relation("GradedBy")
+  comments      InlineComment[]
+  parentLinks   ParentStudentLink[] @relation("ParentLinks")
+  studentLinks  ParentStudentLink[] @relation("StudentLinks")
+  notifications Notification[]
+
+  @@index([classId])
+}
+
+model Class {
+  id          String       @id @default(cuid())
+  name        String
+  teacherId   String
+  teacher     User         @relation("ClassTeacher", fields: [teacherId], references: [id])
+  students    User[]       @relation("ClassStudents")
+  assessments Assessment[]
+  createdAt   DateTime     @default(now())
+
+  @@index([teacherId])
+}
+
+model ParentStudentLink {
+  id        String @id @default(cuid())
+  parentId  String
+  studentId String
+  parent    User   @relation("ParentLinks", fields: [parentId], references: [id])
+  student   User   @relation("StudentLinks", fields: [studentId], references: [id])
+
+  @@unique([parentId, studentId])
+  @@index([studentId])
+}
+
+model Assessment {
+  id          String         @id @default(cuid())
+  title       String
+  description String?
+  type        AssessmentType
+  isQuickTest Boolean        @default(false)
+  classId     String
+  class       Class          @relation(fields: [classId], references: [id])
+  teacherId   String
+  teacher     User           @relation(fields: [teacherId], references: [id])
+  subject     String
+  attachment  String?
+  rubric      Json?
+  dueDate     DateTime
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  questions   Question[]
+  submissions Submission[]
+
+  @@index([classId])
+}
+
+model Question {
+  id            String       @id @default(cuid())
+  assessmentId  String
+  assessment    Assessment   @relation(fields: [assessmentId], references: [id])
+  type          QuestionType
+  text          String
+  options       Json?
+  correctAnswer String
+  order         Int          @default(0)
+
+  answers Answer[]
+
+  @@index([assessmentId])
+}
+
+model Submission {
+  id           String     @id @default(cuid())
+  assessmentId String
+  assessment   Assessment @relation(fields: [assessmentId], references: [id])
+  studentId    String
+  student      User       @relation(fields: [studentId], references: [id])
+
+  textContent String?
+  fileUrl     String?
+  fileType    String?
+
+  status     SubmissionStatus @default(PENDING_REVIEW)
+  autoScore  Int?
+  returnedAt DateTime?
+
+  previousSubmissionId String?     @unique
+  previousSubmission   Submission? @relation("SubmissionHistory", fields: [previousSubmissionId], references: [id])
+  nextSubmission       Submission? @relation("SubmissionHistory")
+
+  isLatest    Boolean  @default(true)
+  submittedAt DateTime @default(now())
+
+  answers  Answer[]
+  comments InlineComment[]
+  grade    Grade?
+
+  @@index([assessmentId])
+  @@index([studentId])
+}
+
+model Answer {
+  id           String     @id @default(cuid())
+  submissionId String
+  submission   Submission @relation(fields: [submissionId], references: [id])
+  questionId   String
+  question     Question   @relation(fields: [questionId], references: [id])
+  response     String?
+  isCorrect    Boolean?
+  autoScored   Boolean    @default(false)
+
+  @@unique([submissionId, questionId])
+}
+
+// Geometry is percent-space (0-100 floats), not pixels, so a pin lands
+// at the same visual spot regardless of render size on re-open.
+model InlineComment {
+  id           String     @id @default(cuid())
+  submissionId String
+  submission   Submission @relation(fields: [submissionId], references: [id])
+  authorId     String
+  author       User       @relation(fields: [authorId], references: [id])
+
+  type CommentType
+
+  x      Float? // PIN
+  y      Float? // PIN
+  width  Float? // HIGHLIGHT
+  height Float? // HIGHLIGHT
+  points Json? // STROKE: ordered array of {x, y} percent pairs
+
+  color       String
+  strokeWidth Float?
+  page        Int? // PDF only
+  number      Int? // PIN only, server-assigned sequentially
+  text        String?
+  createdAt   DateTime @default(now())
+
+  @@index([submissionId])
+}
+
+model Grade {
+  id           String       @id @default(cuid())
+  submissionId String       @unique
+  submission   Submission   @relation(fields: [submissionId], references: [id])
+  score        Int?
+  status       GradeStatus?
+  feedback     String?
+  gradedById   String?
+  gradedBy     User?        @relation("GradedBy", fields: [gradedById], references: [id])
+  gradedAt     DateTime     @default(now())
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id])
+  type      NotificationType
+  payload   Json
+  read      Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  @@index([userId])
 }

@@ -8,6 +8,7 @@ import { AssessmentsModule } from './assessments/assessments.module';
 import { SubmissionsModule } from './submissions/submissions.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { InlineCommentsModule } from './inline-comments/inline-comments.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { PrismaModule } from './prisma/prisma.module';
     SubmissionsModule,
     NotificationsModule,
     PrismaModule,
+    InlineCommentsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -5,15 +5,28 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { QuestionType, SubmissionStatus } from '@prisma/client';
+import {
+  NotificationType,
+  QuestionType,
+  SubmissionStatus,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { AuthUser, assertStudentInClass } from '../common/ownership';
+import {
+  assertOwnsAssessment,
+  assertStudentInClass,
+  AuthUser,
+} from '../common/ownership';
 import { isAutoGraded } from '../common/is-auto-graded';
+import { NotificationsService } from '../notifications/notifications.service';
 import { SubmitAssessmentDto } from './dto/submit-assessment.dto';
+import { GradeSubmissionDto } from './dto/grade-submission.dto';
 
 @Injectable()
 export class SubmissionsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   async submit(user: AuthUser, assessmentId: string, dto: SubmitAssessmentDto) {
     const assessment = await this.prisma.assessment.findUnique({
@@ -143,5 +156,93 @@ export class SubmissionsService {
       },
       include: { answers: true, grade: true },
     });
+  }
+
+  async grade(user: AuthUser, submissionId: string, dto: GradeSubmissionDto) {
+    const submission = await this.prisma.submission.findUnique({
+      where: { id: submissionId },
+      include: { assessment: { include: { class: true } } },
+    });
+    if (!submission) {
+      throw new NotFoundException('Submission not found.');
+    }
+
+    assertOwnsAssessment(user, submission.assessment);
+
+    // Folds the teacher's manual component into any existing autoScore
+    // (e.g. a mixed CBT's short-answer score on top of the auto-graded
+    // portion) rather than requiring them to re-derive the objective part.
+    const finalScore = (submission.autoScore ?? 0) + dto.score;
+
+    // Upsert, not create — a teacher saving a draft grade then coming back
+    // to adjust it before returning is the normal workflow, and
+    // Grade.submissionId is @unique, so a plain create would throw on the
+    // second save.
+    return this.prisma.grade.upsert({
+      where: { submissionId },
+      create: {
+        submissionId,
+        score: finalScore,
+        status: dto.status,
+        feedback: dto.feedback,
+        gradedById: user.userId,
+      },
+      update: {
+        score: finalScore,
+        status: dto.status,
+        feedback: dto.feedback,
+        gradedById: user.userId,
+        gradedAt: new Date(),
+      },
+    });
+  }
+
+  async return(user: AuthUser, submissionId: string) {
+    const submission = await this.prisma.submission.findUnique({
+      where: { id: submissionId },
+      include: {
+        assessment: { include: { class: true } },
+        grade: true,
+        student: { include: { studentLinks: true } },
+      },
+    });
+    if (!submission) {
+      throw new NotFoundException('Submission not found.');
+    }
+
+    assertOwnsAssessment(user, submission.assessment);
+
+    if (!submission.grade) {
+      throw new BadRequestException(
+        'Cannot return a submission that has not been graded.',
+      );
+    }
+
+    const updated = await this.prisma.submission.update({
+      where: { id: submissionId },
+      data: { status: SubmissionStatus.RETURNED, returnedAt: new Date() },
+    });
+
+    const payload = {
+      submissionId,
+      assessmentId: submission.assessmentId,
+      score: submission.grade.score,
+    };
+
+    await this.notificationsService.create(
+      submission.studentId,
+      NotificationType.RETURNED,
+      payload,
+    );
+
+    for (const link of submission.student.studentLinks) {
+      await this.notificationsService.create(
+        link.parentId,
+        NotificationType.RETURNED,
+        payload,
+      );
+    }
+
+    return updated;
   }
 }

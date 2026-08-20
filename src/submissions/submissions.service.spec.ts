@@ -23,6 +23,8 @@ interface SubmissionCreateArg {
     status: SubmissionStatus;
     autoScore?: number;
     grade?: { create: { score: number; gradedById: null } };
+    previousSubmissionId?: string;
+    isLatest?: boolean;
   };
 }
 
@@ -515,6 +517,290 @@ describe('SubmissionsService.return', () => {
 
     await expect(service.return(otherTeacher, 'submission-1')).rejects.toThrow(
       ForbiddenException,
+    );
+  });
+});
+
+describe('SubmissionsService.findOne', () => {
+  let service: SubmissionsService;
+  let prisma: MockPrisma;
+  const teacherId = 'teacher-1';
+  const studentId = 'student-1';
+  const parentId = 'parent-1';
+
+  const fullSubmission = {
+    id: 'submission-1',
+    studentId,
+    assessment: { id: 'assessment-1', class: { teacherId } },
+    student: { studentLinks: [{ parentId, studentId }] },
+  };
+
+  beforeEach(async () => {
+    prisma = {
+      assessment: { findUnique: jest.fn() },
+      user: { findUnique: jest.fn() },
+      submission: {
+        findFirst: jest.fn(),
+        findUnique: jest.fn(),
+        create: newSubmissionCreateMock(),
+        update: newSubmissionUpdateMock(),
+      },
+      grade: { upsert: jest.fn<Promise<{ id: string }>, [GradeUpsertArg]>() },
+    };
+
+    const notifications: MockNotificationsService = { create: jest.fn() };
+    const module = await Test.createTestingModule({
+      providers: [
+        SubmissionsService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: NotificationsService, useValue: notifications },
+      ],
+    }).compile();
+
+    service = module.get(SubmissionsService);
+  });
+
+  it('allows the owning teacher', async () => {
+    prisma.submission.findUnique.mockResolvedValue(fullSubmission);
+    const teacher: AuthUser = { userId: teacherId, role: Role.TEACHER };
+    await expect(
+      service.findOne(teacher, 'submission-1'),
+    ).resolves.toBeDefined();
+  });
+
+  it('allows the submitting student', async () => {
+    prisma.submission.findUnique.mockResolvedValue(fullSubmission);
+    const student: AuthUser = { userId: studentId, role: Role.STUDENT };
+    await expect(
+      service.findOne(student, 'submission-1'),
+    ).resolves.toBeDefined();
+  });
+
+  it('allows a linked parent', async () => {
+    prisma.submission.findUnique.mockResolvedValue(fullSubmission);
+    const parent: AuthUser = { userId: parentId, role: Role.PARENT };
+    await expect(
+      service.findOne(parent, 'submission-1'),
+    ).resolves.toBeDefined();
+  });
+
+  it('allows admin', async () => {
+    prisma.submission.findUnique.mockResolvedValue(fullSubmission);
+    const admin: AuthUser = { userId: 'admin-1', role: Role.ADMIN };
+    await expect(service.findOne(admin, 'submission-1')).resolves.toBeDefined();
+  });
+
+  it('denies an unrelated user', async () => {
+    prisma.submission.findUnique.mockResolvedValue(fullSubmission);
+    const otherStudent: AuthUser = { userId: 'student-2', role: Role.STUDENT };
+    await expect(service.findOne(otherStudent, 'submission-1')).rejects.toThrow(
+      ForbiddenException,
+    );
+  });
+
+  it('throws NotFoundException when the submission does not exist', async () => {
+    prisma.submission.findUnique.mockResolvedValue(null);
+    const teacher: AuthUser = { userId: teacherId, role: Role.TEACHER };
+    await expect(service.findOne(teacher, 'nonexistent')).rejects.toThrow(
+      NotFoundException,
+    );
+  });
+});
+
+describe('SubmissionsService.resubmit', () => {
+  interface MockTx {
+    submission: {
+      update: jest.Mock;
+      create: jest.Mock<Promise<{ id: string }>, [SubmissionCreateArg]>;
+    };
+  }
+
+  let service: SubmissionsService;
+  let prisma: {
+    submission: {
+      findUnique: jest.Mock;
+      findFirst: jest.Mock;
+    };
+    user: { findUnique: jest.Mock };
+    $transaction: jest.Mock<
+      Promise<unknown>,
+      [(tx: MockTx) => Promise<unknown>]
+    >;
+  };
+  let tx: MockTx;
+  let notifications: MockNotificationsService;
+
+  const studentId = 'student-1';
+  const student: AuthUser = { userId: studentId, role: Role.STUDENT };
+  const classId = 'class-1';
+  const teacherId = 'teacher-1';
+  const futureDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  const pastDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+  const mcqQuestion = { id: 'q1', type: QuestionType.MCQ, correctAnswer: 'B' };
+
+  const returnedCbtSubmission = {
+    id: 'submission-1',
+    studentId,
+    status: SubmissionStatus.RETURNED,
+    isLatest: true,
+    assessment: {
+      id: 'assessment-1',
+      type: AssessmentType.CBT,
+      isQuickTest: false,
+      classId,
+      teacherId,
+      dueDate: futureDate,
+      questions: [mcqQuestion],
+    },
+  };
+
+  beforeEach(async () => {
+    tx = {
+      submission: {
+        update: jest.fn(),
+        create: newSubmissionCreateMock().mockImplementation(({ data }) =>
+          Promise.resolve({ id: 'submission-2', ...data }),
+        ),
+      },
+    };
+
+    prisma = {
+      submission: { findUnique: jest.fn(), findFirst: jest.fn() },
+      user: { findUnique: jest.fn() },
+      $transaction: jest.fn<
+        Promise<unknown>,
+        [(tx: MockTx) => Promise<unknown>]
+      >(),
+    };
+    prisma.$transaction.mockImplementation((callback) => callback(tx));
+    prisma.user.findUnique.mockResolvedValue({ id: studentId, classId });
+
+    notifications = { create: jest.fn() };
+    const module = await Test.createTestingModule({
+      providers: [
+        SubmissionsService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: NotificationsService, useValue: notifications },
+      ],
+    }).compile();
+
+    service = module.get(SubmissionsService);
+  });
+
+  it('throws NotFoundException when the submission does not exist', async () => {
+    prisma.submission.findUnique.mockResolvedValue(null);
+    await expect(service.resubmit(student, 'nonexistent', {})).rejects.toThrow(
+      NotFoundException,
+    );
+  });
+
+  it("denies a student resubmitting someone else's work", async () => {
+    prisma.submission.findUnique.mockResolvedValue(returnedCbtSubmission);
+    const otherStudent: AuthUser = { userId: 'student-2', role: Role.STUDENT };
+    await expect(
+      service.resubmit(otherStudent, 'submission-1', {}),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  it('denies a student outside the class', async () => {
+    prisma.submission.findUnique.mockResolvedValue(returnedCbtSubmission);
+    prisma.user.findUnique.mockResolvedValue({
+      id: studentId,
+      classId: 'a-different-class',
+    });
+    await expect(
+      service.resubmit(student, 'submission-1', {
+        answers: [{ questionId: 'q1', response: 'B' }],
+      }),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  it.each([SubmissionStatus.PENDING_REVIEW, SubmissionStatus.GRADED])(
+    'rejects resubmission when status is %s, not RETURNED',
+    async (status) => {
+      prisma.submission.findUnique.mockResolvedValue({
+        ...returnedCbtSubmission,
+        status,
+      });
+      await expect(
+        service.resubmit(student, 'submission-1', {
+          answers: [{ questionId: 'q1', response: 'B' }],
+        }),
+      ).rejects.toThrow(BadRequestException);
+    },
+  );
+
+  it('rejects resubmitting a RETURNED but already-superseded row (isLatest: false) — regression, caught live', async () => {
+    prisma.submission.findUnique.mockResolvedValue({
+      ...returnedCbtSubmission,
+      isLatest: false,
+    });
+    await expect(
+      service.resubmit(student, 'submission-1', {
+        answers: [{ questionId: 'q1', response: 'B' }],
+      }),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('rejects an overdue resubmission on an auto-graded assessment', async () => {
+    prisma.submission.findUnique.mockResolvedValue({
+      ...returnedCbtSubmission,
+      assessment: { ...returnedCbtSubmission.assessment, dueDate: pastDate },
+    });
+    await expect(
+      service.resubmit(student, 'submission-1', {
+        answers: [{ questionId: 'q1', response: 'B' }],
+      }),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  it('flips the old row to isLatest: false and creates a new isLatest: true row linked to it', async () => {
+    prisma.submission.findUnique.mockResolvedValue(returnedCbtSubmission);
+
+    await service.resubmit(student, 'submission-1', {
+      answers: [{ questionId: 'q1', response: 'B' }],
+    });
+
+    expect(tx.submission.update).toHaveBeenCalledWith({
+      where: { id: 'submission-1' },
+      data: { isLatest: false },
+    });
+    const createArg = tx.submission.create.mock.calls[0][0];
+    expect(createArg.data).toEqual(
+      expect.objectContaining({
+        previousSubmissionId: 'submission-1',
+        isLatest: true,
+      }),
+    );
+  });
+
+  it("re-scores the new answers independently of the old submission's score", async () => {
+    prisma.submission.findUnique.mockResolvedValue(returnedCbtSubmission);
+
+    // Resubmitting with the WRONG answer this time — the new row's score
+    // must reflect this attempt, not carry forward whatever the old
+    // (unknown to this test) score was.
+    await service.resubmit(student, 'submission-1', {
+      answers: [{ questionId: 'q1', response: 'wrong-answer' }],
+    });
+
+    const createArg = tx.submission.create.mock.calls[0][0];
+    expect(createArg.data.autoScore).toBe(0);
+    expect(createArg.data.status).toBe(SubmissionStatus.GRADED);
+  });
+
+  it('notifies the teacher with a RESUBMITTED notification', async () => {
+    prisma.submission.findUnique.mockResolvedValue(returnedCbtSubmission);
+
+    await service.resubmit(student, 'submission-1', {
+      answers: [{ questionId: 'q1', response: 'B' }],
+    });
+
+    expect(notifications.create).toHaveBeenCalledWith(
+      teacherId,
+      'RESUBMITTED',
+      expect.objectContaining({ previousSubmissionId: 'submission-1' }),
     );
   });
 });

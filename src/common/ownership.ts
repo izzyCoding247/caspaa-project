@@ -44,7 +44,10 @@ type SubmissionForOwnershipCheck = Submission & {
  * Three distinct ownership shapes: teacher (via Assessment -> Class),
  * student (direct), parent (via ParentStudentLink); admin bypasses.
  * Call after fetching the submission with:
- *   include: { assessment: { include: { class: true } }, student: { include: { studentLinks: true } } }
+ *   include: { assessment: { include: { class: true } }, student: { select: { studentLinks: true } } }
+ * Use select, not include, for student — include pulls the full User row,
+ * passwordHash included. Caught this leaking into a real API response
+ * during Phase 7's live verification.
  */
 export function assertCanViewSubmission(
   user: AuthUser,

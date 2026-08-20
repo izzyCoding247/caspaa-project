@@ -80,7 +80,7 @@ export class InlineCommentsService {
       where: { id: submissionId },
       include: {
         assessment: { include: { class: true } },
-        student: { include: { studentLinks: true } },
+        student: { select: { studentLinks: true } },
       },
     });
     if (!submission) {

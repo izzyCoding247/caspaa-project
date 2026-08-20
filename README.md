@@ -104,6 +104,17 @@ curl -s -w "\nHTTP %{http_code}\n" -X POST http://localhost:3000/assessments/$OV
 curl -s http://localhost:3000/assessments -H "Authorization: Bearer $ADMIN"
 ```
 
+## Out of scope
+
+Deliberately not built for this phase — not gaps I missed, but boundaries drawn to keep M14 focused:
+
+- **File upload** — `Submission.fileUrl`/`fileType` and `Assessment.attachment` store a URL string; this API does not accept multipart file uploads. A client uploads to its own storage (S3, etc.) and passes the resulting URL in.
+- **Account provisioning** — no signup/invite/password-reset. Accounts are created via the seed script only.
+- **Editing/deleting a posted assessment** — create and list only; no update or delete route.
+- **Editing an annotation** — create and delete only; moving a pin means delete-and-recreate.
+- **Structured rubric scoring** — `rubric` is a free-form JSON field, not validated or auto-applied to grading.
+- **Pagination** — `/assessments` and `/notifications` return full lists; fine at seed scale, not yet built for production volume.
+
 ## Tests
 
 ```powershell

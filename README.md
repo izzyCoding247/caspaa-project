@@ -1,98 +1,112 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# CASPAA — Assessments (M14)
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+Backend for the Assessments module: teachers create assignments/CBTs, students submit and get graded (MCQ/True-False auto-graded on submit, short-answer teacher-marked), teachers mark submissions with inline pin/pen/highlight annotations, grade, and return work — which notifies the student and every linked parent. Students can resubmit returned work, pre-populated from their previous answer. Admins see every teacher's assignments/CBTs.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+**Stack:** NestJS 11 · Prisma 6 (PostgreSQL) · Passport JWT · class-validator · Jest
 
-## Description
+## Setup
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+```powershell
+npm install
+copy .env.example .env
+```
+Edit `.env`: set `DATABASE_URL` to your Postgres connection string and `JWT_SECRET` to a random string of 32+ characters.
 
-## Project setup
+```powershell
+npx prisma generate
+npx prisma migrate deploy
+npx prisma db seed
+npm run start
+```
+Server runs at `http://localhost:3000`.
+
+## Seeded accounts
+
+All passwords are `password123`.
+
+| Role    | Email                |
+|---------|-----------------------|
+| Teacher | teacher@caspaa.test  |
+| Student | student@caspaa.test  |
+| Parent  | parent@caspaa.test   |
+| Admin   | admin@caspaa.test    |
+
+## Verifying each acceptance criterion
+
+Run these in order — each step uses IDs returned by the one before it. `TEACHER`, `STUDENT`, `PARENT`, `ADMIN` are JWTs from `POST /auth/login`.
 
 ```bash
-$ npm install
+TEACHER=$(curl -s -X POST http://localhost:3000/auth/login -H "Content-Type: application/json" -d '{"email":"teacher@caspaa.test","password":"password123"}' | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>console.log(JSON.parse(d).accessToken))")
+STUDENT=$(curl -s -X POST http://localhost:3000/auth/login -H "Content-Type: application/json" -d '{"email":"student@caspaa.test","password":"password123"}' | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>console.log(JSON.parse(d).accessToken))")
+PARENT=$(curl -s -X POST http://localhost:3000/auth/login -H "Content-Type: application/json" -d '{"email":"parent@caspaa.test","password":"password123"}' | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>console.log(JSON.parse(d).accessToken))")
+ADMIN=$(curl -s -X POST http://localhost:3000/auth/login -H "Content-Type: application/json" -d '{"email":"admin@caspaa.test","password":"password123"}' | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>console.log(JSON.parse(d).accessToken))")
+CLASS_ID=$(node -e "const{PrismaClient}=require('@prisma/client');new PrismaClient().class.findFirst().then(c=>{console.log(c.id);process.exit()})")
 ```
 
-## Compile and run the project
+### 1. Image pin at click point — pin at exact % coordinates, reloads on re-open
 
 ```bash
-# development
-$ npm run start
+ASSIGNMENT_ID=$(curl -s -X POST http://localhost:3000/assessments -H "Authorization: Bearer $TEACHER" -H "Content-Type: application/json" -d '{"title":"Essay","type":"ASSIGNMENT","classId":"'$CLASS_ID'","subject":"English","dueDate":"2026-12-31T00:00:00.000Z"}' | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>console.log(JSON.parse(d).id))")
+SUBMISSION_ID=$(curl -s -X POST http://localhost:3000/assessments/$ASSIGNMENT_ID/submissions -H "Authorization: Bearer $STUDENT" -H "Content-Type: application/json" -d '{"textContent":"my essay"}' | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>console.log(JSON.parse(d).id))")
 
-# watch mode
-$ npm run start:dev
+curl -s -X POST http://localhost:3000/submissions/$SUBMISSION_ID/annotations -H "Authorization: Bearer $TEACHER" -H "Content-Type: application/json" -d '{"type":"PIN","x":30,"y":40,"color":"#ff0000","text":"check this"}'
 
-# production mode
-$ npm run start:prod
+# reload — confirm the same x/y comes back
+curl -s http://localhost:3000/submissions/$SUBMISSION_ID/annotations -H "Authorization: Bearer $TEACHER"
 ```
 
-## Run tests
+### 2. Return notifies student+parent — both get grade + feedback
 
 ```bash
-# unit tests
-$ npm run test
+curl -s -X PATCH http://localhost:3000/submissions/$SUBMISSION_ID/grade -H "Authorization: Bearer $TEACHER" -H "Content-Type: application/json" -d '{"score":75,"status":"SATISFACTORY","feedback":"Good start"}'
+curl -s -X POST http://localhost:3000/submissions/$SUBMISSION_ID/return -H "Authorization: Bearer $TEACHER"
 
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+# both recipients have a RETURNED notification
+curl -s http://localhost:3000/notifications -H "Authorization: Bearer $STUDENT"
+curl -s http://localhost:3000/notifications -H "Authorization: Bearer $PARENT"
 ```
 
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+### 3. Resubmit always available on returned work — modal pre-populates previous answer
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+# pre-population data: the client fetches the returned submission's own content
+curl -s http://localhost:3000/submissions/$SUBMISSION_ID -H "Authorization: Bearer $STUDENT"
+
+curl -s -X POST http://localhost:3000/submissions/$SUBMISSION_ID/resubmit -H "Authorization: Bearer $STUDENT" -H "Content-Type: application/json" -d '{"textContent":"my improved essay"}'
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+### 4. MCQ/TF auto-graded — score immediate; short-answer pending until marked
 
-## Resources
+```bash
+CBT_ID=$(curl -s -X POST http://localhost:3000/assessments -H "Authorization: Bearer $TEACHER" -H "Content-Type: application/json" -d '{"title":"Quick MCQ","type":"CBT","classId":"'$CLASS_ID'","subject":"Math","dueDate":"2026-12-31T00:00:00.000Z","questions":[{"type":"MCQ","text":"2+2?","options":["3","4"],"correctAnswer":"4"}]}')
+Q_ID=$(echo "$CBT_ID" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>console.log(JSON.parse(d).questions[0].id))")
+CBT_ID=$(echo "$CBT_ID" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>console.log(JSON.parse(d).id))")
 
-Check out a few resources that may come in handy when working with NestJS:
+# response shows status: "GRADED" and autoScore immediately, no teacher action needed
+curl -s -X POST http://localhost:3000/assessments/$CBT_ID/submissions -H "Authorization: Bearer $STUDENT" -H "Content-Type: application/json" -d '{"answers":[{"questionId":"'$Q_ID'","response":"4"}]}'
+```
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+### 5. Overdue CBT — badge shown; cannot submit overdue
 
-## Support
+```bash
+OVERDUE_CBT=$(curl -s -X POST http://localhost:3000/assessments -H "Authorization: Bearer $TEACHER" -H "Content-Type: application/json" -d '{"title":"Old Quiz","type":"CBT","classId":"'$CLASS_ID'","subject":"Math","dueDate":"2020-01-01T00:00:00.000Z","questions":[{"type":"MCQ","text":"2+2?","options":["3","4"],"correctAnswer":"4"}]}' | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>console.log(JSON.parse(d).id))")
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+# badge: isOverdue: true on the list response
+curl -s http://localhost:3000/assessments -H "Authorization: Bearer $TEACHER"
 
-## Stay in touch
+# blocked: 403
+curl -s -w "\nHTTP %{http_code}\n" -X POST http://localhost:3000/assessments/$OVERDUE_CBT/submissions -H "Authorization: Bearer $STUDENT" -H "Content-Type: application/json" -d '{"answers":[]}'
+```
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+### 6. Admin oversight — all teachers' assignments/CBTs visible
 
-## License
+```bash
+curl -s http://localhost:3000/assessments -H "Authorization: Bearer $ADMIN"
+```
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+## Tests
+
+```powershell
+npm run test
+npm run test:e2e
+```

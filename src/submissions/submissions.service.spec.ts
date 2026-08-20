@@ -479,6 +479,20 @@ describe('SubmissionsService.return', () => {
     expect(prisma.submission.update).not.toHaveBeenCalled();
   });
 
+  it('rejects a second /return call with ConflictException and does not re-fire notifications', async () => {
+    prisma.submission.findUnique.mockResolvedValue({
+      ...baseSubmission,
+      status: SubmissionStatus.RETURNED,
+      grade: { score: 90 },
+    });
+
+    await expect(service.return(teacher, 'submission-1')).rejects.toThrow(
+      ConflictException,
+    );
+    expect(prisma.submission.update).not.toHaveBeenCalled();
+    expect(notifications.create).not.toHaveBeenCalled();
+  });
+
   it('sets status RETURNED and notifies the student plus every linked parent', async () => {
     prisma.submission.findUnique.mockResolvedValue({
       ...baseSubmission,

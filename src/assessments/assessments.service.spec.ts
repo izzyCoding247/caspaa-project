@@ -13,6 +13,8 @@ interface MockPrisma {
     findMany: jest.Mock;
     findUnique: jest.Mock;
   };
+  user: { findMany: jest.Mock };
+  submission: { findMany: jest.Mock };
 }
 
 describe('AssessmentsService', () => {
@@ -27,6 +29,8 @@ describe('AssessmentsService', () => {
         findMany: jest.fn().mockResolvedValue([]),
         findUnique: jest.fn(),
       },
+      user: { findMany: jest.fn().mockResolvedValue([]) },
+      submission: { findMany: jest.fn().mockResolvedValue([]) },
     };
 
     const module = await Test.createTestingModule({
@@ -125,8 +129,10 @@ describe('AssessmentsService', () => {
   });
 
   describe('findOne — answer-key stripping', () => {
+    const futureDate = new Date(Date.now() + 24 * 60 * 60 * 1000);
     const assessmentWithAnswers = {
       id: 'assessment-1',
+      dueDate: futureDate,
       questions: [
         {
           id: 'q1',
@@ -146,6 +152,17 @@ describe('AssessmentsService', () => {
       );
 
       expect(result.questions[0]).not.toHaveProperty('correctAnswer');
+    });
+
+    it('includes isOverdue: false for a not-yet-due assessment (student path)', async () => {
+      prisma.assessment.findUnique.mockResolvedValue(assessmentWithAnswers);
+
+      const result = await service.findOne(
+        { userId: 'student-1', role: Role.STUDENT },
+        'assessment-1',
+      );
+
+      expect(result.isOverdue).toBe(false);
     });
 
     it('strips correctAnswer for a parent', async () => {
@@ -181,6 +198,21 @@ describe('AssessmentsService', () => {
       expect(result.questions[0]).toHaveProperty('correctAnswer', '4');
     });
 
+    it('includes isOverdue: true for a past-due assessment (teacher/admin path)', async () => {
+      const pastDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      prisma.assessment.findUnique.mockResolvedValue({
+        ...assessmentWithAnswers,
+        dueDate: pastDate,
+      });
+
+      const result = await service.findOne(
+        { userId: 'teacher-1', role: Role.TEACHER },
+        'assessment-1',
+      );
+
+      expect(result.isOverdue).toBe(true);
+    });
+
     it('throws NotFoundException when the assessment does not exist', async () => {
       prisma.assessment.findUnique.mockResolvedValue(null);
 
@@ -190,6 +222,66 @@ describe('AssessmentsService', () => {
           'nonexistent',
         ),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('findAll — isOverdue', () => {
+    it('attaches isOverdue to every returned assessment', async () => {
+      const pastDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const futureDate = new Date(Date.now() + 24 * 60 * 60 * 1000);
+      prisma.assessment.findMany.mockResolvedValue([
+        { id: 'a1', dueDate: pastDate },
+        { id: 'a2', dueDate: futureDate },
+      ]);
+
+      const result = await service.findAll({
+        userId: 'admin-1',
+        role: Role.ADMIN,
+      });
+
+      expect(result[0].isOverdue).toBe(true);
+      expect(result[1].isOverdue).toBe(false);
+    });
+  });
+
+  describe('getRoster', () => {
+    const teacherId = 'teacher-1';
+    const teacher: AuthUser = { userId: teacherId, role: Role.TEACHER };
+
+    it('wraps the roster with an assessment-level isOverdue flag', async () => {
+      const pastDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      prisma.assessment.findUnique.mockResolvedValue({
+        id: 'assessment-1',
+        classId: 'class-1',
+        dueDate: pastDate,
+        class: { teacherId },
+      });
+      prisma.user.findMany.mockResolvedValue([
+        { id: 'student-1', name: 'A Student', email: 'a@test.com' },
+      ]);
+      prisma.submission.findMany.mockResolvedValue([]);
+
+      const result = await service.getRoster(teacher, 'assessment-1');
+
+      expect(result.isOverdue).toBe(true);
+      expect(result.roster).toHaveLength(1);
+      expect(result.roster[0]).toEqual({
+        student: { id: 'student-1', name: 'A Student', email: 'a@test.com' },
+        submission: null,
+      });
+    });
+
+    it('denies a teacher who does not own the assessment', async () => {
+      prisma.assessment.findUnique.mockResolvedValue({
+        id: 'assessment-1',
+        classId: 'class-1',
+        dueDate: new Date(),
+        class: { teacherId: 'some-other-teacher' },
+      });
+
+      await expect(service.getRoster(teacher, 'assessment-1')).rejects.toThrow(
+        ForbiddenException,
+      );
     });
   });
 });

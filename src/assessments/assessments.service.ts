@@ -6,6 +6,7 @@ import {
 import { Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertOwnsAssessment, AuthUser } from '../common/ownership';
+import { isOverdue } from '../common/is-overdue';
 import { CreateAssessmentDto } from './dto/create-assessment.dto';
 
 @Injectable()
@@ -77,10 +78,15 @@ export class AssessmentsService {
         break;
     }
 
-    return this.prisma.assessment.findMany({
+    const assessments = await this.prisma.assessment.findMany({
       where,
       orderBy: { createdAt: 'desc' },
     });
+
+    return assessments.map((assessment) => ({
+      ...assessment,
+      isOverdue: isOverdue(assessment),
+    }));
   }
 
   async findOne(user: AuthUser, id: string) {
@@ -95,6 +101,7 @@ export class AssessmentsService {
     if (user.role === Role.STUDENT || user.role === Role.PARENT) {
       return {
         ...assessment,
+        isOverdue: isOverdue(assessment),
         questions: assessment.questions.map((question) => {
           // eslint-disable-next-line @typescript-eslint/no-unused-vars
           const { correctAnswer: _correctAnswer, ...rest } = question;
@@ -103,7 +110,7 @@ export class AssessmentsService {
       };
     }
 
-    return assessment;
+    return { ...assessment, isOverdue: isOverdue(assessment) };
   }
 
   // Class roster LEFT JOIN submissions — built as two queries joined in
@@ -133,9 +140,14 @@ export class AssessmentsService {
       submissions.map((s) => [s.studentId, s]),
     );
 
-    return students.map((student) => ({
-      student,
-      submission: submissionByStudent.get(student.id) ?? null,
-    }));
+    // isOverdue is a property of the assessment, not of each roster row —
+    // wrapped rather than repeated redundantly on every student.
+    return {
+      isOverdue: isOverdue(assessment),
+      roster: students.map((student) => ({
+        student,
+        submission: submissionByStudent.get(student.id) ?? null,
+      })),
+    };
   }
 }

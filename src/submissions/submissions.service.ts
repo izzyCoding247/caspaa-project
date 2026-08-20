@@ -402,6 +402,12 @@ export class SubmissionsService {
 
     assertOwnsAssessment(user, submission.assessment);
 
+    // Idempotency: a second /return call must reject cleanly, not silently
+    // re-fire notifications to the student and every linked parent again.
+    if (submission.status === SubmissionStatus.RETURNED) {
+      throw new ConflictException('This submission has already been returned.');
+    }
+
     if (!submission.grade) {
       throw new BadRequestException(
         'Cannot return a submission that has not been graded.',

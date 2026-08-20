@@ -61,17 +61,21 @@ interface MockNotificationsService {
 describe('SubmissionsService.submit', () => {
   let service: SubmissionsService;
   let prisma: MockPrisma;
+  let notifications: MockNotificationsService;
 
   const student: AuthUser = { userId: 'student-1', role: Role.STUDENT };
   const classId = 'class-1';
   const futureDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
   const pastDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
+  const teacherId = 'teacher-1';
+
   const assignment = {
     id: 'assessment-assignment',
     type: AssessmentType.ASSIGNMENT,
     isQuickTest: false,
     classId,
+    teacherId,
     dueDate: futureDate,
     questions: [],
   };
@@ -97,6 +101,7 @@ describe('SubmissionsService.submit', () => {
     type: AssessmentType.CBT,
     isQuickTest: false,
     classId,
+    teacherId,
     dueDate: futureDate,
     questions: [mcqQuestion, trueFalseQuestion],
   };
@@ -106,6 +111,7 @@ describe('SubmissionsService.submit', () => {
     type: AssessmentType.CBT,
     isQuickTest: false,
     classId,
+    teacherId,
     dueDate: futureDate,
     questions: [mcqQuestion, shortAnswerQuestion],
   };
@@ -115,6 +121,7 @@ describe('SubmissionsService.submit', () => {
     type: AssessmentType.CBT,
     isQuickTest: true,
     classId,
+    teacherId,
     dueDate: futureDate,
     questions: [mcqQuestion, trueFalseQuestion],
   };
@@ -135,7 +142,7 @@ describe('SubmissionsService.submit', () => {
     };
     prisma.user.findUnique.mockResolvedValue({ id: 'student-1', classId });
 
-    const notifications: MockNotificationsService = { create: jest.fn() };
+    notifications = { create: jest.fn() };
     const module = await Test.createTestingModule({
       providers: [
         SubmissionsService,
@@ -145,6 +152,18 @@ describe('SubmissionsService.submit', () => {
     }).compile();
 
     service = module.get(SubmissionsService);
+  });
+
+  it('notifies the owning teacher on a successful submit', async () => {
+    prisma.assessment.findUnique.mockResolvedValue(assignment);
+
+    await service.submit(student, assignment.id, { textContent: 'hi' });
+
+    expect(notifications.create).toHaveBeenCalledWith(
+      teacherId,
+      'SUBMITTED',
+      expect.objectContaining({ studentId: student.userId }),
+    );
   });
 
   it('throws NotFoundException when the assessment does not exist', async () => {

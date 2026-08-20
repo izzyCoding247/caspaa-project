@@ -142,7 +142,7 @@ export class SubmissionsService {
 
     // Nested create is an implicit Prisma transaction — submission, answers,
     // and the immediate grade (if any) either all persist together or none do.
-    return this.prisma.submission.create({
+    const submission = await this.prisma.submission.create({
       data: {
         assessmentId,
         studentId: user.userId,
@@ -156,6 +156,20 @@ export class SubmissionsService {
       },
       include: { answers: true, grade: true },
     });
+
+    // Resubmit (Phase 7) calls this same method from the same trigger
+    // point, not a new design decision — just a second call site.
+    await this.notificationsService.create(
+      assessment.teacherId,
+      NotificationType.SUBMITTED,
+      {
+        submissionId: submission.id,
+        assessmentId,
+        studentId: user.userId,
+      },
+    );
+
+    return submission;
   }
 
   async grade(user: AuthUser, submissionId: string, dto: GradeSubmissionDto) {

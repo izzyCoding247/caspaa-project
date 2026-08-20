@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { AuthUser } from '../common/ownership';
+import { assertOwnsAssessment, AuthUser } from '../common/ownership';
 import { CreateAssessmentDto } from './dto/create-assessment.dto';
 
 @Injectable()
@@ -104,5 +104,38 @@ export class AssessmentsService {
     }
 
     return assessment;
+  }
+
+  // Class roster LEFT JOIN submissions — built as two queries joined in
+  // application code, since Prisma has no native outer-join-from-the-class
+  // -side for "every student, whether or not they've submitted."
+  async getRoster(user: AuthUser, assessmentId: string) {
+    const assessment = await this.prisma.assessment.findUnique({
+      where: { id: assessmentId },
+      include: { class: true },
+    });
+    if (!assessment) {
+      throw new NotFoundException('Assessment not found.');
+    }
+
+    assertOwnsAssessment(user, assessment);
+
+    const students = await this.prisma.user.findMany({
+      where: { classId: assessment.classId, role: Role.STUDENT },
+      select: { id: true, name: true, email: true },
+    });
+
+    const submissions = await this.prisma.submission.findMany({
+      where: { assessmentId, isLatest: true },
+      include: { grade: true },
+    });
+    const submissionByStudent = new Map(
+      submissions.map((s) => [s.studentId, s]),
+    );
+
+    return students.map((student) => ({
+      student,
+      submission: submissionByStudent.get(student.id) ?? null,
+    }));
   }
 }

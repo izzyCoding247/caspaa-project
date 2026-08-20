@@ -5,6 +5,7 @@ import {
   ParentStudentLink,
   Role,
   Submission,
+  User,
 } from '@prisma/client';
 
 export interface AuthUser {
@@ -72,4 +73,23 @@ export function assertCanViewSubmission(
   }
 
   throw new ForbiddenException('You do not have access to this submission.');
+}
+
+/**
+ * A student may only act on an assessment belonging to their own class;
+ * admin bypasses. Call with the already-fetched student (for their
+ * classId) and assessment.
+ */
+export function assertStudentInClass(
+  user: AuthUser,
+  student: Pick<User, 'classId'>,
+  assessment: Pick<Assessment, 'classId'>,
+): void {
+  if (user.role === Role.ADMIN) return;
+
+  if (student.classId !== null && student.classId === assessment.classId) {
+    return;
+  }
+
+  throw new ForbiddenException('You are not enrolled in this class.');
 }

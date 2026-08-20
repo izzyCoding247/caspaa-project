@@ -31,4 +31,9 @@ export class AssessmentsController {
   findOne(@Request() req: AuthenticatedRequest, @Param('id') id: string) {
     return this.assessmentsService.findOne(req.user, id);
   }
+
+  @Get(':id/roster')
+  getRoster(@Request() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.assessmentsService.getRoster(req.user, id);
+  }
 }

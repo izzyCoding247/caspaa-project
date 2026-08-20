@@ -129,7 +129,7 @@ model Question {
   type          QuestionType
   text          String
   options       Json?
-  correctAnswer String
+  correctAnswer String?
   order         Int          @default(0)
 
   answers Answer[]
